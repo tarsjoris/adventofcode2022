@@ -12,33 +12,40 @@ struct Valve {
 }
 
 impl Valve {
-    fn replace_tunnel(&mut self, valve_name_to_remove: &String, valve_to_remove: &Valve) {
-        if let Some(position) = self
+    fn bypass_valve(&self, valve_to_bypass: &Valve) -> Self {
+        let mut new_tunnels = Vec::new();
+        self.tunnels
+            .iter()
+            .filter(|(tunnel_name, _)| valve_to_bypass.name != *tunnel_name)
+            .for_each(|(tunnel_name, length)| new_tunnels.push((tunnel_name.to_string(), *length)));
+        let old_tunnel = self
             .tunnels
             .iter()
-            .position(|(name, _)| name == valve_name_to_remove)
-        {
-            let (_, removed_tunnel_length) = self.tunnels.remove(position);
-            for (tunnel_name, length) in valve_to_remove.tunnels.iter() {
-                if *tunnel_name != self.name {
-                    let new_tunnel_length = removed_tunnel_length + length;
-                    if let Some(position) = self
-                        .tunnels
+            .filter(|(tunnel_name, _)| *tunnel_name == valve_to_bypass.name)
+            .next();
+        if let Some(old_tunnel) = old_tunnel {
+            for (new_tunnel_name, length) in valve_to_bypass.tunnels.iter() {
+                if *new_tunnel_name != self.name {
+                    let new_tunnel_length = old_tunnel.1 + length;
+                    if let Some(position) = new_tunnels
                         .iter()
-                        .position(|(name, _)| name == tunnel_name)
+                        .position(|(name, _)| name == new_tunnel_name)
                     {
-                        let (_, existing_tunnel_length) = self.tunnels.get(position).unwrap();
+                        let (_, existing_tunnel_length) = new_tunnels.get(position).unwrap();
                         if new_tunnel_length < *existing_tunnel_length {
-                            self.tunnels.remove(position);
-                            self.tunnels
-                                .push((tunnel_name.to_string(), new_tunnel_length));
+                            new_tunnels.remove(position);
+                            new_tunnels.push((new_tunnel_name.to_string(), new_tunnel_length));
                         }
                     } else {
-                        self.tunnels
-                            .push((tunnel_name.to_string(), new_tunnel_length));
+                        new_tunnels.push((new_tunnel_name.to_string(), new_tunnel_length));
                     }
                 }
             }
+        }
+        Valve {
+            name: self.name.to_string(),
+            rate: self.rate,
+            tunnels: new_tunnels,
         }
     }
 }
@@ -48,34 +55,55 @@ struct Scan {
 }
 
 impl Scan {
-    fn get_valve_count(&self) -> usize {
-        self.valves.len()
-    }
-
-    fn get_useless_valve_names(&self) -> Vec<String> {
+    fn get_closed_valve_count(&self) -> usize {
         self.valves
             .iter()
-            .filter(|(_, valve)| valve.rate == 0)
-            .map(|(name, _)| name.to_string())
-            .collect()
+            .filter(|(_, valve)| valve.rate != 0)
+            .count()
     }
 
-    fn remove_useless_valves(&mut self) {
-        for useless_valve_name in self.get_useless_valve_names() {
-            if useless_valve_name != "AA" {
-                self.remove_valve(&useless_valve_name);
+    fn is_zero_rate(&self, valve_name: &String) -> bool {
+        self.valves
+            .values()
+            .any(|valve| valve.name == *valve_name && valve.rate == 0)
+    }
+
+    fn bypass_useless_valves(self) -> Self {
+        let useless_valve_names: Vec<&String> = self
+            .valves
+            .values()
+            .filter(|valve| valve.rate == 0)
+            .map(|valve| &valve.name)
+            .collect();
+        let mut valve_it = useless_valve_names.iter();
+        if let Some(useless_valve_name) = valve_it.next() {
+            let mut scooter = self.bypass_valve(useless_valve_name);
+            while let Some(useless_valve_name) = valve_it.next() {
+                scooter = scooter.bypass_valve(useless_valve_name);
             }
+            scooter
+        } else {
+            self
         }
     }
 
-    fn remove_valve(&mut self, valve_name_to_remove: &String) {
-        let valve_to_remove = self.valves.remove(valve_name_to_remove).unwrap();
-        for valve in self.valves.values_mut() {
-            valve.replace_tunnel(valve_name_to_remove, &valve_to_remove);
-        }
+    fn bypass_valve(&self, useless_valve_name: &String) -> Self {
+        let useless_valve = self
+            .valves
+            .values()
+            .filter(|valve| valve.name == *useless_valve_name)
+            .next()
+            .unwrap();
+        let new_valves = self
+            .valves
+            .iter()
+            .map(|(valve_name, valve)| (valve_name.to_string(), valve.bypass_valve(&useless_valve)))
+            .collect();
+        Scan { valves: new_valves }
     }
 
     fn print(&self) {
+        println!();
         self.valves.iter().for_each(|(valve_name, valve)| {
             println!("{valve_name}");
             valve
@@ -87,19 +115,37 @@ impl Scan {
 }
 
 enum ValveList<'a> {
-    Last(Vec<&'a String>),
+    End,
     Node(&'a String, &'a ValveList<'a>),
+}
+
+impl ValveList<'_> {
+    fn contains(&self, valve_name: &String) -> bool {
+        match self {
+            ValveList::End => false,
+            ValveList::Node(name, next) => {
+                if valve_name == *name {
+                    true
+                } else {
+                    next.contains(valve_name)
+                }
+            }
+        }
+    }
 }
 
 fn main() {
     let first_node = "AA".to_string();
     let mut scan = read_input("input.txt");
-    scan.remove_useless_valves();
+    scan = scan.bypass_useless_valves();
     scan.print();
-    let useless_valve_names = scan.get_useless_valve_names();
-    let closed_valve_count = scan.get_valve_count() - useless_valve_names.len();
-    let open_valves = ValveList::Last(useless_valve_names.iter().collect());
-    let trail_without_opening = ValveList::Last(vec![&first_node]);
+    let closed_valve_count = scan.get_closed_valve_count();
+    let open_valves = if scan.is_zero_rate(&first_node) {
+        ValveList::Node(&first_node, &ValveList::End)
+    } else {
+        ValveList::End
+    };
+    let trail_without_opening = ValveList::Node(&first_node, &ValveList::End);
     let player_state = PlayerState {
         minutes_left: 26,
         current_valve_name: &first_node,
@@ -144,9 +190,10 @@ fn get_most_pressure_release(
         return 0;
     }
     let mut most_pressure_release = 0;
-    if !contains(open_valves, player_a.current_valve_name) {
+    if !open_valves.contains(player_a.current_valve_name) {
         let new_open_valves = ValveList::Node(player_a.current_valve_name, open_valves);
-        let new_trail_without_opening = ValveList::Last(vec![player_a.current_valve_name]);
+        let new_trail_without_opening =
+            ValveList::Node(player_a.current_valve_name, &ValveList::End);
         let child_pressure_release = get_most_pressure_release(
             scan,
             closed_valve_count - 1,
@@ -168,7 +215,7 @@ fn get_most_pressure_release(
         .unwrap()
         .tunnels
         .iter()
-        .filter(|tunnel| !contains(player_a.trail_without_opening, &tunnel.0))
+        .filter(|tunnel| !player_a.trail_without_opening.contains(&tunnel.0))
         .map(|(tunnel_name, tunnel_length)| {
             let new_trail_without_opening =
                 ValveList::Node(tunnel_name, &player_a.trail_without_opening);
@@ -188,19 +235,6 @@ fn get_most_pressure_release(
         .unwrap_or(0);
     most_pressure_release = cmp::max(most_pressure_release, max_tunnels_pressure_release);
     most_pressure_release
-}
-
-fn contains(valve_list: &ValveList, valve_name: &String) -> bool {
-    match valve_list {
-        ValveList::Last(names) => names.contains(&valve_name),
-        ValveList::Node(name, next) => {
-            if valve_name == *name {
-                true
-            } else {
-                contains(next, valve_name)
-            }
-        }
-    }
 }
 
 fn read_input(filename: &str) -> Scan {
