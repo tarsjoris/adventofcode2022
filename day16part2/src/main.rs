@@ -26,76 +26,87 @@ fn main() {
     let open_valves = ValveList::Last(useless_valve_names);
     let first_node = "AA".to_string();
     let trail_without_opening = ValveList::Last(vec![&first_node]);
+    let player_state = PlayerState {
+        minutes_left: 26,
+        current_valve_name: &first_node,
+        trail_without_opening: &trail_without_opening,
+    };
     let most_pressure_release = get_most_pressure_release(
         &scan,
-        26,
-        false,
         closed_valve_count,
-        &first_node,
-        &first_node,
         &open_valves,
-        &trail_without_opening,
-        &trail_without_opening,
+        &player_state,
+        &player_state,
     );
     println!("Most pressure release = {most_pressure_release}");
 }
 
+struct PlayerState<'a> {
+    minutes_left: u8,
+    current_valve_name: &'a String,
+    trail_without_opening: &'a ValveList<'a>,
+}
+
 fn get_most_pressure_release(
     scan: &Scan,
-    minutes_left: u8,
-    advance_time: bool,
     closed_valve_count: usize,
-    current_valve_name_a: &String,
-    current_valve_name_b: &String,
     open_valves: &ValveList,
-    trail_without_opening_a: &ValveList,
-    trail_without_opening_b: &ValveList,
+    player_a: &PlayerState,
+    player_b: &PlayerState,
 ) -> u32 {
-    if minutes_left == 0 || closed_valve_count == 0 {
+    if closed_valve_count == 0 {
         return 0;
     }
-    let remaining_minutes = if advance_time {
-        minutes_left - 1
-    } else {
-        minutes_left
-    };
+    if player_b.minutes_left > player_a.minutes_left {
+        return get_most_pressure_release(
+            scan,
+            closed_valve_count,
+            open_valves,
+            player_b,
+            player_a,
+        );
+    }
+    if player_a.minutes_left <= 0 {
+        return 0;
+    }
     let mut most_pressure_release = 0;
-    if !contains(open_valves, current_valve_name_a) {
-        let new_open_valves = ValveList::Node(current_valve_name_a, open_valves);
-        let new_trail_without_opening = ValveList::Last(vec![current_valve_name_a]);
+    if !contains(open_valves, player_a.current_valve_name) {
+        let new_open_valves = ValveList::Node(player_a.current_valve_name, open_valves);
+        let new_trail_without_opening = ValveList::Last(vec![player_a.current_valve_name]);
         let child_pressure_release = get_most_pressure_release(
             scan,
-            remaining_minutes,
-            !advance_time,
             closed_valve_count - 1,
-            current_valve_name_b,
-            current_valve_name_a,
             &new_open_valves,
-            &trail_without_opening_b,
-            &new_trail_without_opening,
+            &PlayerState {
+                minutes_left: player_a.minutes_left - 1,
+                current_valve_name: player_a.current_valve_name,
+                trail_without_opening: &new_trail_without_opening,
+            },
+            player_b,
         );
-        let extra_release =
-            scan.get(current_valve_name_a).unwrap().rate * (minutes_left as u32 - 1);
+        let extra_release = scan.get(player_a.current_valve_name).unwrap().rate
+            * (player_a.minutes_left as u32 - 1);
         most_pressure_release = child_pressure_release + extra_release;
     }
     let max_tunnels_pressure_release = scan
-        .get(current_valve_name_a)
+        .get(player_a.current_valve_name)
         .unwrap()
         .tunnels
         .iter()
-        .filter(|tunnel| !contains(trail_without_opening_a, tunnel))
+        .filter(|tunnel| !contains(player_a.trail_without_opening, tunnel))
         .map(|tunnel| {
-            let new_trail_without_opening = ValveList::Node(tunnel, &trail_without_opening_a);
+            let new_trail_without_opening =
+                ValveList::Node(tunnel, &player_a.trail_without_opening);
             get_most_pressure_release(
                 scan,
-                remaining_minutes,
-                !advance_time,
                 closed_valve_count,
-                current_valve_name_b,
-                tunnel,
                 open_valves,
-                &trail_without_opening_b,
-                &new_trail_without_opening,
+                &PlayerState {
+                    minutes_left: player_a.minutes_left - 1,
+                    current_valve_name: tunnel,
+                    trail_without_opening: &&new_trail_without_opening,
+                },
+                player_b,
             )
         })
         .max()
