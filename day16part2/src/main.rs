@@ -195,7 +195,7 @@ fn get_most_pressure_release(
         let new_trail_without_opening =
             ValveList::Node(player_a.current_valve_name, &ValveList::End);
         let child_pressure_release = get_most_pressure_release(
-            scan,
+            &scan.bypass_valve(player_a.current_valve_name),
             closed_valve_count - 1,
             &new_open_valves,
             &PlayerState {
