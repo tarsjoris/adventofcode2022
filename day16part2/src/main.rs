@@ -141,11 +141,9 @@ fn main() {
     } else {
         ValveList::End
     };
-    let trail_without_opening = ValveList::Node(&first_node, &ValveList::End);
     let player_state = PlayerState {
         minutes_left: 26,
         current_valve_name: &first_node,
-        trail_without_opening: &trail_without_opening,
     };
     let closed_valve_rates = scan.get_valve_rates();
     let most_pressure_release = get_most_pressure_release(
@@ -163,7 +161,6 @@ fn main() {
 struct PlayerState<'a> {
     minutes_left: i8,
     current_valve_name: &'a String,
-    trail_without_opening: &'a ValveList<'a>,
 }
 
 fn get_most_pressure_release(
@@ -206,8 +203,6 @@ fn get_most_pressure_release(
             *best_release = current_release;
         }
         let new_open_valves = ValveList::Node(player_a.current_valve_name, open_valves);
-        let new_trail_without_opening =
-            ValveList::Node(player_a.current_valve_name, &ValveList::End);
         let child_pressure_release = get_most_pressure_release(
             //&scan.bypass_valve(player_a.current_valve_name),
             scan,
@@ -216,7 +211,6 @@ fn get_most_pressure_release(
             &PlayerState {
                 minutes_left: player_a.minutes_left - 1,
                 current_valve_name: player_a.current_valve_name,
-                trail_without_opening: &new_trail_without_opening,
             },
             player_b,
             current_release,
@@ -230,10 +224,7 @@ fn get_most_pressure_release(
         .unwrap()
         .tunnels
         .iter()
-        .filter(|tunnel| !player_a.trail_without_opening.contains(&tunnel.0))
         .map(|(tunnel_name, tunnel_length)| {
-            let new_trail_without_opening =
-                ValveList::Node(tunnel_name, &player_a.trail_without_opening);
             get_most_pressure_release(
                 scan,
                 closed_valve_rates,
@@ -241,7 +232,6 @@ fn get_most_pressure_release(
                 &PlayerState {
                     minutes_left: player_a.minutes_left - tunnel_length,
                     current_valve_name: tunnel_name,
-                    trail_without_opening: &&new_trail_without_opening,
                 },
                 player_b,
                 parent_release,
