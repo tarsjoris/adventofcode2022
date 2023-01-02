@@ -55,11 +55,8 @@ struct Scan {
 }
 
 impl Scan {
-    fn get_closed_valve_count(&self) -> usize {
-        self.valves
-            .iter()
-            .filter(|(_, valve)| valve.rate != 0)
-            .count()
+    fn get_valve_rates(&self) -> u32 {
+        self.valves.values().map(|valve| valve.rate).sum()
     }
 
     fn is_zero_rate(&self, valve_name: &String) -> bool {
@@ -139,7 +136,6 @@ fn main() {
     let mut scan = read_input("input.txt");
     scan = scan.bypass_useless_valves();
     scan.print();
-    let closed_valve_count = scan.get_closed_valve_count();
     let open_valves = if scan.is_zero_rate(&first_node) {
         ValveList::Node(&first_node, &ValveList::End)
     } else {
@@ -151,12 +147,15 @@ fn main() {
         current_valve_name: &first_node,
         trail_without_opening: &trail_without_opening,
     };
+    let closed_valve_rates = scan.get_valve_rates();
     let most_pressure_release = get_most_pressure_release(
         &scan,
-        closed_valve_count,
+        closed_valve_rates,
         &open_valves,
         &player_state,
         &player_state,
+        0,
+        &mut 0,
     );
     println!("Most pressure release = {most_pressure_release}");
 }
@@ -169,34 +168,50 @@ struct PlayerState<'a> {
 
 fn get_most_pressure_release(
     scan: &Scan,
-    closed_valve_count: usize,
+    closed_valve_rates: u32,
     open_valves: &ValveList,
     player_a: &PlayerState,
     player_b: &PlayerState,
+    parent_release: u32,
+    best_release: &mut u32,
 ) -> u32 {
-    if closed_valve_count == 0 {
-        return 0;
+    if closed_valve_rates == 0 {
+        // no more valves to open, pressure release will stay the same
+        return parent_release;
+    }
+    if player_a.minutes_left <= 0 {
+        return parent_release;
     }
     if player_b.minutes_left > player_a.minutes_left {
         return get_most_pressure_release(
             scan,
-            closed_valve_count,
+            closed_valve_rates,
             open_valves,
             player_b,
             player_a,
+            parent_release,
+            best_release,
         );
     }
-    if player_a.minutes_left <= 0 {
+    if parent_release + closed_valve_rates * (player_a.minutes_left as u32 - 1) <= *best_release {
+        // can't beat the best release anymore, abort
         return 0;
     }
     let mut most_pressure_release = 0;
     if !open_valves.contains(player_a.current_valve_name) {
+        let valve_rate = scan.valves.get(player_a.current_valve_name).unwrap().rate;
+        let current_release = parent_release + valve_rate * (player_a.minutes_left as u32 - 1);
+        if current_release > *best_release {
+            println!("Berst release {current_release}");
+            *best_release = current_release;
+        }
         let new_open_valves = ValveList::Node(player_a.current_valve_name, open_valves);
         let new_trail_without_opening =
             ValveList::Node(player_a.current_valve_name, &ValveList::End);
         let child_pressure_release = get_most_pressure_release(
-            &scan.bypass_valve(player_a.current_valve_name),
-            closed_valve_count - 1,
+            //&scan.bypass_valve(player_a.current_valve_name),
+            scan,
+            closed_valve_rates - valve_rate,
             &new_open_valves,
             &PlayerState {
                 minutes_left: player_a.minutes_left - 1,
@@ -204,10 +219,10 @@ fn get_most_pressure_release(
                 trail_without_opening: &new_trail_without_opening,
             },
             player_b,
+            current_release,
+            best_release,
         );
-        let extra_release = scan.valves.get(player_a.current_valve_name).unwrap().rate
-            * (player_a.minutes_left as u32 - 1);
-        most_pressure_release = child_pressure_release + extra_release;
+        most_pressure_release = child_pressure_release;
     }
     let max_tunnels_pressure_release = scan
         .valves
@@ -221,7 +236,7 @@ fn get_most_pressure_release(
                 ValveList::Node(tunnel_name, &player_a.trail_without_opening);
             get_most_pressure_release(
                 scan,
-                closed_valve_count,
+                closed_valve_rates,
                 open_valves,
                 &PlayerState {
                     minutes_left: player_a.minutes_left - tunnel_length,
@@ -229,6 +244,8 @@ fn get_most_pressure_release(
                     trail_without_opening: &&new_trail_without_opening,
                 },
                 player_b,
+                parent_release,
+                best_release,
             )
         })
         .max()
