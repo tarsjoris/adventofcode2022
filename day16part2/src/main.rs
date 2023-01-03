@@ -3,12 +3,17 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead};
 
-type Tunnel = (String, i8);
+struct Tunnel {
+    next_valve_name: String,
+    distance: i8,
+}
+
+type Tunnels = Vec<Tunnel>;
 
 struct Valve {
     name: String,
     rate: u32,
-    tunnels: Vec<Tunnel>,
+    tunnels: Tunnels,
 }
 
 impl Valve {
@@ -16,28 +21,39 @@ impl Valve {
         let mut new_tunnels = Vec::new();
         self.tunnels
             .iter()
-            .filter(|(tunnel_name, _)| valve_to_bypass.name != *tunnel_name)
-            .for_each(|(tunnel_name, length)| new_tunnels.push((tunnel_name.to_string(), *length)));
+            .filter(|tunnel| valve_to_bypass.name != *tunnel.next_valve_name)
+            .for_each(|tunnel| {
+                new_tunnels.push(Tunnel {
+                    next_valve_name: tunnel.next_valve_name.to_string(),
+                    distance: tunnel.distance,
+                })
+            });
         let old_tunnel = self
             .tunnels
             .iter()
-            .filter(|(tunnel_name, _)| *tunnel_name == valve_to_bypass.name)
+            .filter(|tunnel| *tunnel.next_valve_name == valve_to_bypass.name)
             .next();
         if let Some(old_tunnel) = old_tunnel {
-            for (new_tunnel_name, length) in valve_to_bypass.tunnels.iter() {
-                if *new_tunnel_name != self.name {
-                    let new_tunnel_length = old_tunnel.1 + length;
+            for new_tunnel in valve_to_bypass.tunnels.iter() {
+                if new_tunnel.next_valve_name != self.name {
+                    let new_tunnel_length = old_tunnel.distance + new_tunnel.distance;
                     if let Some(position) = new_tunnels
                         .iter()
-                        .position(|(name, _)| name == new_tunnel_name)
+                        .position(|t| t.next_valve_name == new_tunnel.next_valve_name)
                     {
-                        let (_, existing_tunnel_length) = new_tunnels.get(position).unwrap();
-                        if new_tunnel_length < *existing_tunnel_length {
+                        let existing_tunnel = new_tunnels.get(position).unwrap();
+                        if new_tunnel_length < existing_tunnel.distance {
                             new_tunnels.remove(position);
-                            new_tunnels.push((new_tunnel_name.to_string(), new_tunnel_length));
+                            new_tunnels.push(Tunnel {
+                                next_valve_name: new_tunnel.next_valve_name.to_string(),
+                                distance: new_tunnel_length,
+                            });
                         }
                     } else {
-                        new_tunnels.push((new_tunnel_name.to_string(), new_tunnel_length));
+                        new_tunnels.push(Tunnel {
+                            next_valve_name: new_tunnel.next_valve_name.to_string(),
+                            distance: new_tunnel_length,
+                        });
                     }
                 }
             }
@@ -99,15 +115,96 @@ impl Scan {
         Scan { valves: new_valves }
     }
 
+    fn connect_all_valves(self) -> Self {
+        let new_valves = self
+            .valves
+            .iter()
+            .map(|(valve_name, valve)| (valve_name.to_string(), self.valve_with_all_tunnels(valve)))
+            .collect();
+        Scan { valves: new_valves }
+    }
+
+    fn valve_with_all_tunnels(&self, valve: &Valve) -> Valve {
+        let mut new_tunnels = Vec::new();
+        for existing_tunnel in valve.tunnels.iter() {
+            new_tunnels.push(Tunnel {
+                next_valve_name: existing_tunnel.next_valve_name.to_string(),
+                distance: existing_tunnel.distance,
+            });
+        }
+        let mut extra_tunnels =
+            self.get_next_tunnels(&valve.tunnels, &valve.name, &mut new_tunnels);
+        while !extra_tunnels.is_empty() {
+            extra_tunnels = self.get_next_tunnels(&extra_tunnels, &valve.name, &mut new_tunnels);
+        }
+        Valve {
+            name: valve.name.to_string(),
+            rate: valve.rate,
+            tunnels: new_tunnels,
+        }
+    }
+
+    fn get_next_tunnels(
+        &self,
+        tunnels: &Tunnels,
+        own_valve_name: &String,
+        new_tunnels: &mut Tunnels,
+    ) -> Tunnels {
+        let mut next_tunnels = Vec::new();
+        for tunnel in tunnels {
+            if let Some(next_valve) = self.valves.get(&tunnel.next_valve_name) {
+                for next_tunnel in next_valve.tunnels.iter() {
+                    if *own_valve_name != next_tunnel.next_valve_name
+                        && !new_tunnels
+                            .iter()
+                            .any(|t| t.next_valve_name == next_tunnel.next_valve_name)
+                    {
+                        next_tunnels.push(Tunnel {
+                            next_valve_name: next_tunnel.next_valve_name.to_string(),
+                            distance: tunnel.distance + next_tunnel.distance,
+                        });
+                        new_tunnels.push(Tunnel {
+                            next_valve_name: next_tunnel.next_valve_name.to_string(),
+                            distance: tunnel.distance + next_tunnel.distance,
+                        });
+                    }
+                }
+            }
+        }
+        next_tunnels
+    }
+
     fn print(&self) {
-        println!();
         self.valves.iter().for_each(|(valve_name, valve)| {
             println!("{valve_name}");
-            valve
-                .tunnels
-                .iter()
-                .for_each(|tunnel| println!("  Tunnel to {} in {}", tunnel.0, tunnel.1));
+            valve.tunnels.iter().for_each(|tunnel| {
+                println!(
+                    "  Tunnel to {} in {}",
+                    tunnel.next_valve_name, tunnel.distance
+                )
+            });
         });
+        println!();
+    }
+}
+
+enum ValveList<'a> {
+    End,
+    Node(String, &'a ValveList<'a>),
+}
+
+impl ValveList<'_> {
+    fn contains(&self, valve_name: &String) -> bool {
+        match self {
+            ValveList::End => false,
+            ValveList::Node(name, next) => {
+                if valve_name == name {
+                    true
+                } else {
+                    next.contains(valve_name)
+                }
+            }
+        }
     }
 }
 
@@ -115,16 +212,25 @@ fn main() {
     let first_node = "AA".to_string();
     let mut scan = read_input("input.txt");
     scan = scan.bypass_useless_valves();
+    println!("Bypassed tunnels");
     scan.print();
+    scan = scan.connect_all_valves();
+    println!("Connected all tunnels");
+    scan.print();
+    let open_valves = if scan.is_zero_rate(&first_node) {
+        ValveList::Node(first_node.to_string(), &ValveList::End)
+    } else {
+        ValveList::End
+    };
     let player_state = PlayerState {
         minutes_left: 26,
         current_valve_name: &first_node,
-        can_open_valve: !scan.is_zero_rate(&first_node),
     };
     let closed_valve_rates = scan.get_valve_rates();
     let most_pressure_release = get_most_pressure_release(
         &scan,
         closed_valve_rates,
+        &open_valves,
         &player_state,
         &player_state,
         0,
@@ -136,12 +242,12 @@ fn main() {
 struct PlayerState<'a> {
     minutes_left: i8,
     current_valve_name: &'a String,
-    can_open_valve: bool,
 }
 
 fn get_most_pressure_release(
     scan: &Scan,
     closed_valve_rates: u32,
+    open_valves: &ValveList,
     player_a: &PlayerState,
     player_b: &PlayerState,
     parent_release: u32,
@@ -158,6 +264,7 @@ fn get_most_pressure_release(
         return get_most_pressure_release(
             scan,
             closed_valve_rates,
+            open_valves,
             player_b,
             player_a,
             parent_release,
@@ -169,31 +276,23 @@ fn get_most_pressure_release(
         return 0;
     }
     let mut most_pressure_release = 0;
-    if player_a.can_open_valve {
+    if !open_valves.contains(player_a.current_valve_name) {
         let valve_rate = scan.valves.get(player_a.current_valve_name).unwrap().rate;
         let current_release = parent_release + valve_rate * (player_a.minutes_left as u32 - 1);
         if current_release > *best_release {
             println!("Best release {current_release}");
             *best_release = current_release;
         }
-        let new_player_b = PlayerState {
-            minutes_left: player_b.minutes_left,
-            current_valve_name: player_b.current_valve_name,
-            can_open_valve: if player_b.current_valve_name == player_a.current_valve_name {
-                false
-            } else {
-                player_b.can_open_valve
-            },
-        };
+        let new_open_valves = ValveList::Node(player_a.current_valve_name.to_string(), open_valves);
         let child_pressure_release = get_most_pressure_release(
-            &scan.bypass_valve(player_a.current_valve_name),
+            scan,
             closed_valve_rates - valve_rate,
+            &new_open_valves,
             &PlayerState {
                 minutes_left: player_a.minutes_left - 1,
                 current_valve_name: player_a.current_valve_name,
-                can_open_valve: false,
             },
-            &new_player_b,
+            player_b,
             current_release,
             best_release,
         );
@@ -205,14 +304,15 @@ fn get_most_pressure_release(
         .unwrap()
         .tunnels
         .iter()
-        .map(|(tunnel_name, tunnel_length)| {
+        .filter(|tunnel| !open_valves.contains(&tunnel.next_valve_name))
+        .map(|tunnel| {
             get_most_pressure_release(
                 scan,
                 closed_valve_rates,
+                open_valves,
                 &PlayerState {
-                    minutes_left: player_a.minutes_left - tunnel_length,
-                    current_valve_name: tunnel_name,
-                    can_open_valve: true,
+                    minutes_left: player_a.minutes_left - tunnel.distance,
+                    current_valve_name: &tunnel.next_valve_name,
                 },
                 player_b,
                 parent_release,
@@ -257,7 +357,10 @@ fn parse_valve(line: &String) -> (String, Valve) {
     parts.next(); // valves/valve
     let tunnels = parts
         .filter(|s| !s.is_empty())
-        .map(|s| (s.to_string(), 1))
+        .map(|s| Tunnel {
+            next_valve_name: s.to_string(),
+            distance: 1,
+        })
         .collect();
     let valve_name = name.to_string();
     (
