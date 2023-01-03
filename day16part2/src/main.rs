@@ -111,45 +111,20 @@ impl Scan {
     }
 }
 
-enum ValveList<'a> {
-    End,
-    Node(&'a String, &'a ValveList<'a>),
-}
-
-impl ValveList<'_> {
-    fn contains(&self, valve_name: &String) -> bool {
-        match self {
-            ValveList::End => false,
-            ValveList::Node(name, next) => {
-                if valve_name == *name {
-                    true
-                } else {
-                    next.contains(valve_name)
-                }
-            }
-        }
-    }
-}
-
 fn main() {
     let first_node = "AA".to_string();
     let mut scan = read_input("input.txt");
     scan = scan.bypass_useless_valves();
     scan.print();
-    let open_valves = if scan.is_zero_rate(&first_node) {
-        ValveList::Node(&first_node, &ValveList::End)
-    } else {
-        ValveList::End
-    };
     let player_state = PlayerState {
         minutes_left: 26,
         current_valve_name: &first_node,
+        can_open_valve: !scan.is_zero_rate(&first_node),
     };
     let closed_valve_rates = scan.get_valve_rates();
     let most_pressure_release = get_most_pressure_release(
         &scan,
         closed_valve_rates,
-        &open_valves,
         &player_state,
         &player_state,
         0,
@@ -161,12 +136,12 @@ fn main() {
 struct PlayerState<'a> {
     minutes_left: i8,
     current_valve_name: &'a String,
+    can_open_valve: bool,
 }
 
 fn get_most_pressure_release(
     scan: &Scan,
     closed_valve_rates: u32,
-    open_valves: &ValveList,
     player_a: &PlayerState,
     player_b: &PlayerState,
     parent_release: u32,
@@ -183,7 +158,6 @@ fn get_most_pressure_release(
         return get_most_pressure_release(
             scan,
             closed_valve_rates,
-            open_valves,
             player_b,
             player_a,
             parent_release,
@@ -195,24 +169,31 @@ fn get_most_pressure_release(
         return 0;
     }
     let mut most_pressure_release = 0;
-    if !open_valves.contains(player_a.current_valve_name) {
+    if player_a.can_open_valve {
         let valve_rate = scan.valves.get(player_a.current_valve_name).unwrap().rate;
         let current_release = parent_release + valve_rate * (player_a.minutes_left as u32 - 1);
         if current_release > *best_release {
-            println!("Berst release {current_release}");
+            println!("Best release {current_release}");
             *best_release = current_release;
         }
-        let new_open_valves = ValveList::Node(player_a.current_valve_name, open_valves);
+        let new_player_b = PlayerState {
+            minutes_left: player_b.minutes_left,
+            current_valve_name: player_b.current_valve_name,
+            can_open_valve: if player_b.current_valve_name == player_a.current_valve_name {
+                false
+            } else {
+                player_b.can_open_valve
+            },
+        };
         let child_pressure_release = get_most_pressure_release(
-            //&scan.bypass_valve(player_a.current_valve_name),
-            scan,
+            &scan.bypass_valve(player_a.current_valve_name),
             closed_valve_rates - valve_rate,
-            &new_open_valves,
             &PlayerState {
                 minutes_left: player_a.minutes_left - 1,
                 current_valve_name: player_a.current_valve_name,
+                can_open_valve: false,
             },
-            player_b,
+            &new_player_b,
             current_release,
             best_release,
         );
@@ -228,10 +209,10 @@ fn get_most_pressure_release(
             get_most_pressure_release(
                 scan,
                 closed_valve_rates,
-                open_valves,
                 &PlayerState {
                     minutes_left: player_a.minutes_left - tunnel_length,
                     current_valve_name: tunnel_name,
+                    can_open_valve: true,
                 },
                 player_b,
                 parent_release,
