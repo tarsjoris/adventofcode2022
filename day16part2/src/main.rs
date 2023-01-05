@@ -71,8 +71,16 @@ struct Scan {
 }
 
 impl Scan {
-    fn get_valve_rates(&self) -> u32 {
-        self.valves.values().map(|valve| valve.rate).sum()
+    fn get_closed_valve_rates(&self) -> Vec<u32> {
+        let mut rates: Vec<u32> = self
+            .valves
+            .values()
+            .map(|valve| valve.rate)
+            .filter(|r| *r > 0)
+            .collect();
+        rates.sort_unstable_by(|a, b| b.cmp(a));
+        rates.iter().for_each(|r| println!("{r}"));
+        rates
     }
 
     fn is_zero_rate(&self, valve_name: &String) -> bool {
@@ -208,6 +216,11 @@ impl ValveList<'_> {
     }
 }
 
+struct PlayerState<'a> {
+    minutes_left: i8,
+    current_valve_name: &'a String,
+}
+
 fn main() {
     let first_node = "AA".to_string();
     let mut scan = read_input("input.txt");
@@ -226,10 +239,10 @@ fn main() {
         minutes_left: 26,
         current_valve_name: &first_node,
     };
-    let closed_valve_rates = scan.get_valve_rates();
+    let closed_valve_rates = scan.get_closed_valve_rates();
     let most_pressure_release = get_most_pressure_release(
         &scan,
-        closed_valve_rates,
+        &closed_valve_rates,
         &open_valves,
         &player_state,
         &player_state,
@@ -239,21 +252,16 @@ fn main() {
     println!("Most pressure release = {most_pressure_release}");
 }
 
-struct PlayerState<'a> {
-    minutes_left: i8,
-    current_valve_name: &'a String,
-}
-
 fn get_most_pressure_release(
     scan: &Scan,
-    closed_valve_rates: u32,
+    closed_valve_rates: &Vec<u32>,
     open_valves: &ValveList,
     player_a: &PlayerState,
     player_b: &PlayerState,
     parent_release: u32,
     best_release: &mut u32,
 ) -> u32 {
-    if closed_valve_rates == 0 {
+    if closed_valve_rates.is_empty() {
         // no more valves to open, pressure release will stay the same
         return parent_release;
     }
@@ -271,7 +279,9 @@ fn get_most_pressure_release(
             best_release,
         );
     }
-    if parent_release + closed_valve_rates * (player_a.minutes_left as u32 - 1) <= *best_release {
+    if parent_release + get_max_extra_release(closed_valve_rates, player_a.minutes_left)
+        <= *best_release
+    {
         // can't beat the best release anymore, abort
         return 0;
     }
@@ -284,9 +294,10 @@ fn get_most_pressure_release(
             *best_release = current_release;
         }
         let new_open_valves = ValveList::Node(player_a.current_valve_name.to_string(), open_valves);
+        let new_closed_valve_rates = remove_valve(&closed_valve_rates, valve_rate);
         let child_pressure_release = get_most_pressure_release(
             scan,
-            closed_valve_rates - valve_rate,
+            &new_closed_valve_rates,
             &new_open_valves,
             &PlayerState {
                 minutes_left: player_a.minutes_left - 1,
@@ -320,9 +331,40 @@ fn get_most_pressure_release(
             )
         })
         .max()
-        .unwrap_or(0);
+        .unwrap_or(parent_release);
     most_pressure_release = cmp::max(most_pressure_release, max_tunnels_pressure_release);
     most_pressure_release
+}
+
+fn remove_valve(valve_rates: &Vec<u32>, rate: u32) -> Vec<u32> {
+    if valve_rates.len() == 1 {
+        Vec::new()
+    } else {
+        let mut rates = valve_rates.clone();
+        let rate_index = rates
+            .iter()
+            .position(|r| *r == rate)
+            .unwrap();
+        rates.remove(rate_index);
+        rates
+    }
+}
+
+fn get_max_extra_release(rates_sorted: &Vec<u32>, minutes_left: i8) -> u32 {
+    let mut remaining_minutes: u32 = minutes_left as u32 - 1u32;
+    let mut result = 0u32;
+    let mut travel = false;
+    for rate in rates_sorted {
+        result += *rate * remaining_minutes;
+        if travel {
+            if remaining_minutes <= 2u32 {
+                return result;
+            }
+            remaining_minutes -= 2u32;
+        }
+        travel = !travel;
+    }
+    result
 }
 
 fn read_input(filename: &str) -> Scan {
