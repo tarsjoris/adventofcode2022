@@ -1,7 +1,8 @@
-use std::cmp;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead};
+
+// 2412 too low
 
 struct Tunnel {
     next_valve_name: String,
@@ -285,7 +286,6 @@ fn get_most_pressure_release(
         // can't beat the best release anymore, abort
         return 0;
     }
-    let mut most_pressure_release = 0;
     if !open_valves.contains(player_a.current_valve_name) {
         let valve_rate = scan.valves.get(player_a.current_valve_name).unwrap().rate;
         let current_release = parent_release + valve_rate * (player_a.minutes_left as u32 - 1);
@@ -295,7 +295,7 @@ fn get_most_pressure_release(
         }
         let new_open_valves = ValveList::Node(player_a.current_valve_name.to_string(), open_valves);
         let new_closed_valve_rates = remove_valve(&closed_valve_rates, valve_rate);
-        let child_pressure_release = get_most_pressure_release(
+        get_most_pressure_release(
             scan,
             &new_closed_valve_rates,
             &new_open_valves,
@@ -306,34 +306,31 @@ fn get_most_pressure_release(
             player_b,
             current_release,
             best_release,
-        );
-        most_pressure_release = child_pressure_release;
+        )
+    } else {
+        scan.valves
+            .get(player_a.current_valve_name)
+            .unwrap()
+            .tunnels
+            .iter()
+            .filter(|tunnel| !open_valves.contains(&tunnel.next_valve_name))
+            .map(|tunnel| {
+                get_most_pressure_release(
+                    scan,
+                    closed_valve_rates,
+                    open_valves,
+                    &PlayerState {
+                        minutes_left: player_a.minutes_left - tunnel.distance,
+                        current_valve_name: &tunnel.next_valve_name,
+                    },
+                    player_b,
+                    parent_release,
+                    best_release,
+                )
+            })
+            .max()
+            .unwrap_or(parent_release)
     }
-    let max_tunnels_pressure_release = scan
-        .valves
-        .get(player_a.current_valve_name)
-        .unwrap()
-        .tunnels
-        .iter()
-        .filter(|tunnel| !open_valves.contains(&tunnel.next_valve_name))
-        .map(|tunnel| {
-            get_most_pressure_release(
-                scan,
-                closed_valve_rates,
-                open_valves,
-                &PlayerState {
-                    minutes_left: player_a.minutes_left - tunnel.distance,
-                    current_valve_name: &tunnel.next_valve_name,
-                },
-                player_b,
-                parent_release,
-                best_release,
-            )
-        })
-        .max()
-        .unwrap_or(parent_release);
-    most_pressure_release = cmp::max(most_pressure_release, max_tunnels_pressure_release);
-    most_pressure_release
 }
 
 fn remove_valve(valve_rates: &Vec<u32>, rate: u32) -> Vec<u32> {
@@ -341,10 +338,7 @@ fn remove_valve(valve_rates: &Vec<u32>, rate: u32) -> Vec<u32> {
         Vec::new()
     } else {
         let mut rates = valve_rates.clone();
-        let rate_index = rates
-            .iter()
-            .position(|r| *r == rate)
-            .unwrap();
+        let rate_index = rates.iter().position(|r| *r == rate).unwrap();
         rates.remove(rate_index);
         rates
     }
